@@ -104,6 +104,43 @@ const cleanupPageHighlights = async () => {
   }
 };
 
+// Function to remove highlight for a specific XPath
+const removeHighlightByXPath = async (xpath) => {
+  try {
+    let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (xpathToRemove) => {
+        // Helper function to evaluate XPath
+        function evaluateXPath(xpath) {
+          try {
+            const result = document.evaluate(
+              xpath, 
+              document, 
+              null, 
+              XPathResult.FIRST_ORDERED_NODE_TYPE, 
+              null
+            );
+            return result.singleNodeValue;
+          } catch (e) {
+            console.log('XPath evaluation error:', e);
+            return null;
+          }
+        }
+        
+        // Find the element using the XPath and remove highlight
+        const element = evaluateXPath(xpathToRemove);
+        if (element && element.classList) {
+          element.classList.remove('xpath-highlight');
+        }
+      },
+      args: [xpath]
+    });
+  } catch (e) {
+    console.log('Error removing highlight:', e);
+  }
+};
+
 // Add XPath to the list
 const addXPath = (label, xpath) => {
   if (xpaths.length >= MAX_SELECTION) {
@@ -130,33 +167,20 @@ const addXPath = (label, xpath) => {
   xpathList.appendChild(li);
   updateUI();
   
-  // Delete button handler
-  li.querySelector('.delete-btn').onclick = (e) => {
+  // Delete button handler - FIXED VERSION
+  li.querySelector('.delete-btn').onclick = async (e) => {
     e.stopPropagation();
     li.style.transform = 'translateX(100%)';
     li.style.opacity = '0';
+    
+    // Remove highlight from page using the actual XPath
+    await removeHighlightByXPath(xpath);
+    
     setTimeout(() => {
       xpathList.removeChild(li);
       const index = xpaths.findIndex(x => Object.values(x)[0] === xpath);
       if (index !== -1) xpaths.splice(index, 1);
       updateUI();
-      
-      // Remove highlight from page
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        chrome.scripting.executeScript({
-          target: { tabId: tabs[0].id },
-          func: (xpathToRemove) => {
-            const elements = document.querySelectorAll('.xpath-highlight');
-            elements.forEach(el => {
-              // Simple XPath check - you might want to improve this
-              if (el.textContent.includes(xpathToRemove.split('/').pop())) {
-                el.classList.remove('xpath-highlight');
-              }
-            });
-          },
-          args: [xpath]
-        });
-      });
     }, 200);
   };
   
@@ -229,6 +253,53 @@ const togglePicker = async () => {
             if (el === document.body) return '/html/body';
             if (el.id) return `//*[@id="${el.id}"]`;
             
+
+            // Use name if it's unique
+            if (el.name) {
+              const sameName = document.querySelectorAll(`[name="${el.name}"]`);
+              if (sameName.length === 1) {
+                return `//${el.tagName.toLowerCase()}[@name="${el.name}"]`;
+              }
+            }
+          
+            // Use class if it's unique
+            if (el.classList.length > 0) {
+              for (const cls of el.classList) {
+                const sameClass = document.querySelectorAll(`.${cls}`);
+                if (sameClass.length === 1) {
+                  return `//${el.tagName.toLowerCase()}[@class="${cls}"]`;
+                }
+              }
+            }
+          
+            // Use type + name if unique (for inputs, buttons, etc.)
+            const type = el.getAttribute('type');
+            if (type && el.name) {
+              const selector = `${el.tagName.toLowerCase()}[type="${type}"][name="${el.name}"]`;
+              const sameCombo = document.querySelectorAll(selector);
+              if (sameCombo.length === 1) {
+                return `//${selector}`;
+              }
+            }
+          
+            // Use tag only if it's unique in document
+            const tag = el.tagName.toLowerCase();
+            const tagElements = document.getElementsByTagName(tag);
+            if (tagElements.length === 1) {
+              return `//${tag}`;
+            }
+
+            // Check if it has unique text content
+            const text = el.textContent.trim();
+            if (text && text.length < 40) {
+              const sameText = Array.from(document.getElementsByTagName(tag)).filter(
+                e => e.textContent.trim() === text
+              );
+              if (sameText.length === 1) {
+                return `//${tag}[text()="${text}"]`;
+              }
+            }
+
             let ix = 0;
             const siblings = el.parentNode ? el.parentNode.childNodes : [];
             for (let i = 0; i < siblings.length; i++) {
