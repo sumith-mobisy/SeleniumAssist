@@ -52,8 +52,7 @@ copyResponseBtn.onclick = () => {
 };
 
 // Fixed context for Gemini prompt
-const FIXED_CONTEXT = `You are an expert in UI test automation with deep knowledge in Selenium
-Given the xpaths of elements, write Selenium test cases for theese scenarioes (assuming that all the setups are already done and you just need to use the xpaths to generate test case functions) -`;
+const FIXED_CONTEXT = `You are an expert in UI test automation with deep knowledge in Selenium Given the xpaths of elements, write Selenium test cases for theese scenarioes -`;
 
 const updateUI = () => {
   elementCount.textContent = `${xpaths.length}/${MAX_SELECTION}`;
@@ -386,9 +385,10 @@ const sendData = async () => {
     const userPrompt = prompt;
     const payload = {
       contents: [
-        { parts: [ { text: FIXED_CONTEXT + '\n\n' + userPrompt + '\n\n' + 'Xpaths - ' + xpaths.map(x => Object.values(x)[0]).join('\n') } ] } + 'INSTRUCTIONS : use selenium-java 4.8.1'
+        { parts: [ { text: FIXED_CONTEXT  + userPrompt +  '\n\n Xpaths - ' + xpaths.map(x => Object.values(x)[0]).join('\n') + 'INSTRUCTIONS : use selenium-java 4.8.1, No need to have code for setup, you just need to use the xpaths to generate test case functions. use these imports import org.openqa.selenium.*;import org.openqa.selenium.chrome.*;import org.openqa.selenium.edge.*; import org.openqa.selenium.firefox.*;import org.openqa.selenium.interactions.*;import org.openqa.seleniumsupport.events.*;import org.testng.annotations.*;import org.testng.asserts.*;' } ] } 
       ]
     };
+    console.log(payload);
 
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
