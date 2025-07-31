@@ -247,13 +247,15 @@ const togglePicker = async () => {
           }
           
           // XPath function
-          function getXPath(el) {
-            if (!el || el.nodeType !== 1) return '';
+          function getXPathWithSummary(el) {
+            if (!el || el.nodeType !== 1) return { xpath: '', summary: '' };
           
-            // Special case: if element is a button with class "multiselect", return the XPath of the nearest parent <select>
-            if (el.tagName.toLowerCase() === 'span'){
+            // Handle <span> wrapping the multiselect button
+            if (el.tagName.toLowerCase() === 'span') {
               el = el.parentElement;
             }
+          
+            // Special case: if element is a button with class "multiselect", return the XPath of the nearest parent <select>
             if (
               el.tagName.toLowerCase() === 'button' &&
               el.classList.contains('multiselect')
@@ -262,76 +264,87 @@ const togglePicker = async () => {
               while (parent) {
                 const select = parent.querySelector('select');
                 if (select) {
-                  return getXPath(select);
+                  return getXPathWithSummary(select);
                 }
                 parent = parent.parentElement;
               }
             }
           
-            if (el === document.body) return '/html/body';
-            if (el.id) return `//*[@id="${el.id}"]`;
-          
-            // Use name if it's unique
-            if (el.name) {
+            let xpath = '';
+            if (el === document.body) {
+              xpath = '/html/body';
+            } else if (el.id) {
+              xpath = `//*[@id="${el.id}"]`;
+            } else if (el.name) {
               const sameName = document.querySelectorAll(`[name="${el.name}"]`);
               if (sameName.length === 1) {
-                return `//${el.tagName.toLowerCase()}[@name="${el.name}"]`;
+                xpath = `//${el.tagName.toLowerCase()}[@name="${el.name}"]`;
               }
-            }
-          
-            // Use class if it's unique
-            if (el.classList.length > 0) {
+            } else if (el.classList.length > 0) {
               for (const cls of el.classList) {
                 const sameClass = document.querySelectorAll(`.${cls}`);
                 if (sameClass.length === 1) {
-                  return `//${el.tagName.toLowerCase()}[@class="${cls}"]`;
+                  xpath = `//${el.tagName.toLowerCase()}[@class="${cls}"]`;
+                  break;
+                }
+              }
+            } else {
+              const type = el.getAttribute('type');
+              if (type && el.name) {
+                const selector = `${el.tagName.toLowerCase()}[type="${type}"][name="${el.name}"]`;
+                const sameCombo = document.querySelectorAll(selector);
+                if (sameCombo.length === 1) {
+                  xpath = `//${selector}`;
+                }
+              }
+          
+              if (!xpath) {
+                const tag = el.tagName.toLowerCase();
+                const tagElements = document.getElementsByTagName(tag);
+                if (tagElements.length === 1) {
+                  xpath = `//${tag}`;
+                } else {
+                  const text = el.textContent.trim();
+                  if (text && text.length < 40) {
+                    const sameText = Array.from(document.getElementsByTagName(tag)).filter(
+                      e => e.textContent.trim() === text
+                    );
+                    if (sameText.length === 1) {
+                      xpath = `//${tag}[text()="${text}"]`;
+                    }
+                  }
+                }
+              }
+          
+              if (!xpath) {
+                let ix = 0;
+                const siblings = el.parentNode ? el.parentNode.childNodes : [];
+                for (let i = 0; i < siblings.length; i++) {
+                  const sibling = siblings[i];
+                  if (sibling === el) {
+                    const parentResult = getXPathWithSummary(el.parentNode);
+                    xpath = `${parentResult.xpath}/${el.tagName.toLowerCase()}[${ix + 1}]`;
+                    break;
+                  }
+                  if (sibling.nodeType === 1 && sibling.tagName === el.tagName) {
+                    ix++;
+                  }
                 }
               }
             }
           
-            // Use type + name if unique (for inputs, buttons, etc.)
+            // Generate minimal HTML summary
+            let summary = `<${el.tagName.toLowerCase()}`;
+            if (el.id) summary += ` id="${el.id}"`;
+            if (el.name) summary += ` name="${el.name}"`;
+            if (el.className) summary += ` class="${el.className}"`;
             const type = el.getAttribute('type');
-            if (type && el.name) {
-              const selector = `${el.tagName.toLowerCase()}[type="${type}"][name="${el.name}"]`;
-              const sameCombo = document.querySelectorAll(selector);
-              if (sameCombo.length === 1) {
-                return `//${selector}`;
-              }
-            }
+            if (type) summary += ` type="${type}"`;
+            summary += '>';
           
-            // Use tag only if it's unique in document
-            const tag = el.tagName.toLowerCase();
-            const tagElements = document.getElementsByTagName(tag);
-            if (tagElements.length === 1) {
-              return `//${tag}`;
-            }
-          
-            // Check if it has unique text content
-            const text = el.textContent.trim();
-            if (text && text.length < 40) {
-              const sameText = Array.from(document.getElementsByTagName(tag)).filter(
-                e => e.textContent.trim() === text
-              );
-              if (sameText.length === 1) {
-                return `//${tag}[text()="${text}"]`;
-              }
-            }
-          
-            let ix = 0;
-            const siblings = el.parentNode ? el.parentNode.childNodes : [];
-            for (let i = 0; i < siblings.length; i++) {
-              const sibling = siblings[i];
-              if (sibling === el) {
-                const path = getXPath(el.parentNode);
-                return `${path}/${el.tagName.toLowerCase()}[${ix + 1}]`;
-              }
-              if (sibling.nodeType === 1 && sibling.tagName === el.tagName) {
-                ix++;
-              }
-            }
-          
-            return '';
+            return { xpath, summary };
           }
+          
                     
           
           // Create and store the click handler
@@ -341,8 +354,10 @@ const togglePicker = async () => {
             event.stopImmediatePropagation();
             
             const el = event.target;
-            const xpath = getXPath(el);
-            const label = el.innerText.trim().slice(0, 40) || el.tagName.toLowerCase();
+            const xpathSummary = getXPathWithSummary(el);
+            const xpath = xpathSummary.xpath;
+            // const label = el.innerText.trim().slice(0, 40) || el.tagName.toLowerCase();
+            const label = xpathSummary.summary;
             
             // Send to side panel
             chrome.runtime.sendMessage({
@@ -401,14 +416,20 @@ const sendData = async () => {
       return;
     }
 
+    const xpathString = xpaths
+      .map(x => {
+        const key = Object.keys(x)[0];
+        const value = x[key];
+        return `${key}: '${value}'`;
+      })
+      .join('\n');
     // Compose payload
     const userPrompt = prompt;
     const payload = {
       contents: [
-        { parts: [ { text: FIXED_CONTEXT  + userPrompt +  '\n\n Xpaths - ' + xpaths.map(x => Object.values(x)[0]).join('\n') + '**INSTRUCTIONS** : use selenium-java 4.8.1, Avoid setup code and comments,, use the xpaths to generate test case functions. Whenever DB call is required use this function DBReader.QueryResult() which is already defined, use these imports import org.openqa.selenium.*;import org.openqa.selenium.chrome.*;import org.openqa.selenium.edge.*; import org.openqa.selenium.firefox.*;import org.openqa.selenium.interactions.*;import org.openqa.seleniumsupport.events.*;import org.testng.annotations.*;import org.testng.asserts.*;' } ] } 
+        { parts: [ { text: FIXED_CONTEXT  + userPrompt +  '\n\n Xpaths - ' + xpathString + '**INSTRUCTIONS** : use selenium-java 4.8.1, Avoid setup code and comments,, use the xpaths to generate test case functions. Whenever DB call is required use this function DBReader.QueryResult() which is already defined, use these imports import org.openqa.selenium.*;import org.openqa.selenium.chrome.*;import org.openqa.selenium.edge.*; import org.openqa.selenium.firefox.*;import org.openqa.selenium.interactions.*;import org.openqa.seleniumsupport.events.*;import org.testng.annotations.*;import org.testng.asserts.*;' } ] } 
       ]
     };
-    console.log(payload);
 
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
