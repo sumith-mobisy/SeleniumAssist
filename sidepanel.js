@@ -249,10 +249,28 @@ const togglePicker = async () => {
           // XPath function
           function getXPath(el) {
             if (!el || el.nodeType !== 1) return '';
+          
+            // Special case: if element is a button with class "multiselect", return the XPath of the nearest parent <select>
+            if (el.tagName.toLowerCase() === 'span'){
+              el = el.parentElement;
+            }
+            if (
+              el.tagName.toLowerCase() === 'button' &&
+              el.classList.contains('multiselect')
+            ) {
+              let parent = el.parentElement;
+              while (parent) {
+                const select = parent.querySelector('select');
+                if (select) {
+                  return getXPath(select);
+                }
+                parent = parent.parentElement;
+              }
+            }
+          
             if (el === document.body) return '/html/body';
             if (el.id) return `//*[@id="${el.id}"]`;
-            
-
+          
             // Use name if it's unique
             if (el.name) {
               const sameName = document.querySelectorAll(`[name="${el.name}"]`);
@@ -287,7 +305,7 @@ const togglePicker = async () => {
             if (tagElements.length === 1) {
               return `//${tag}`;
             }
-
+          
             // Check if it has unique text content
             const text = el.textContent.trim();
             if (text && text.length < 40) {
@@ -298,7 +316,7 @@ const togglePicker = async () => {
                 return `//${tag}[text()="${text}"]`;
               }
             }
-
+          
             let ix = 0;
             const siblings = el.parentNode ? el.parentNode.childNodes : [];
             for (let i = 0; i < siblings.length; i++) {
@@ -311,8 +329,10 @@ const togglePicker = async () => {
                 ix++;
               }
             }
+          
             return '';
           }
+                    
           
           // Create and store the click handler
           window.__xpathClickHandler = function(event) {
@@ -385,7 +405,7 @@ const sendData = async () => {
     const userPrompt = prompt;
     const payload = {
       contents: [
-        { parts: [ { text: FIXED_CONTEXT  + userPrompt +  '\n\n Xpaths - ' + xpaths.map(x => Object.values(x)[0]).join('\n') + 'INSTRUCTIONS : use selenium-java 4.8.1, No need to have code for setup, you just need to use the xpaths to generate test case functions. use these imports import org.openqa.selenium.*;import org.openqa.selenium.chrome.*;import org.openqa.selenium.edge.*; import org.openqa.selenium.firefox.*;import org.openqa.selenium.interactions.*;import org.openqa.seleniumsupport.events.*;import org.testng.annotations.*;import org.testng.asserts.*;' } ] } 
+        { parts: [ { text: FIXED_CONTEXT  + userPrompt +  '\n\n Xpaths - ' + xpaths.map(x => Object.values(x)[0]).join('\n') + '**INSTRUCTIONS** : use selenium-java 4.8.1, No need to have code for setup, keep the comments minimal, you just need to use the xpaths to generate test case functions. use these imports import org.openqa.selenium.*;import org.openqa.selenium.chrome.*;import org.openqa.selenium.edge.*; import org.openqa.selenium.firefox.*;import org.openqa.selenium.interactions.*;import org.openqa.seleniumsupport.events.*;import org.testng.annotations.*;import org.testng.asserts.*;' } ] } 
       ]
     };
     console.log(payload);
