@@ -146,7 +146,7 @@ const addXPath = (label, xpath) => {
     return false;
   }
   
-  const labelKey = label.replace(/\s+/g, ' ').trim();
+  const labelKey = '';
   xpaths.push({ [labelKey]: xpath });
   
   const li = document.createElement('li');
