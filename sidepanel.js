@@ -405,7 +405,7 @@ const sendData = async () => {
     const userPrompt = prompt;
     const payload = {
       contents: [
-        { parts: [ { text: FIXED_CONTEXT  + userPrompt +  '\n\n Xpaths - ' + xpaths.map(x => Object.values(x)[0]).join('\n') + '**INSTRUCTIONS** : use selenium-java 4.8.1, No need to have code for setup, keep the comments minimal, you just need to use the xpaths to generate test case functions. use these imports import org.openqa.selenium.*;import org.openqa.selenium.chrome.*;import org.openqa.selenium.edge.*; import org.openqa.selenium.firefox.*;import org.openqa.selenium.interactions.*;import org.openqa.seleniumsupport.events.*;import org.testng.annotations.*;import org.testng.asserts.*;' } ] } 
+        { parts: [ { text: FIXED_CONTEXT  + userPrompt +  '\n\n Xpaths - ' + xpaths.map(x => Object.values(x)[0]).join('\n') + '**INSTRUCTIONS** : use selenium-java 4.8.1, Avoid setup code and comments,, use the xpaths to generate test case functions. Whenever DB call is required use this function DBReader.QueryResult() which is already defined, use these imports import org.openqa.selenium.*;import org.openqa.selenium.chrome.*;import org.openqa.selenium.edge.*; import org.openqa.selenium.firefox.*;import org.openqa.selenium.interactions.*;import org.openqa.seleniumsupport.events.*;import org.testng.annotations.*;import org.testng.asserts.*;' } ] } 
       ]
     };
     console.log(payload);
