@@ -1,0 +1,20 @@
+{
+    "name": "Bizom Test-Case Assistant",
+    "description": "This extension is used to get xpaths of elements by selecting them",
+    "version": "1.0",
+    "manifest_version": 3,
+    "action": {
+      "default_popup": "inspect.html",
+      "default_icon": "inspect.jpg"
+    },
+    "permissions": ["scripting", "activeTab", "clipboardWrite", "sidePanel", "storage"],
+    "host_permissions": [
+      "<all_urls>"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "side_panel": {
+        "default_path": "sidepanel.html"
+    }
+  }

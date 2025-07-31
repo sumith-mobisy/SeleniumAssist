@@ -1,0 +1,406 @@
+// Side panel functionality with embedded XPath picker
+let xpaths = [];
+let isPickerActive = false;
+
+// DOM elements
+const xpathList = document.getElementById('xpath-list');
+const clearButton = document.getElementById('clear-xpath');
+const sendButton = document.getElementById('send-data');
+const chatInput = document.getElementById('chat-input');
+const emptyState = document.getElementById('empty-state');
+const elementCount = document.getElementById('element-count');
+const statusIndicator = document.getElementById('status-indicator');
+const startPickerButton = document.getElementById('start-picker');
+
+const MAX_SELECTION = 10;
+
+// Settings modal logic
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsModal = document.getElementById('settingsModal');
+const closeSettings = document.getElementById('closeSettings');
+const geminiApiKeyInput = document.getElementById('geminiApiKey');
+const saveApiKeyBtn = document.getElementById('saveApiKey');
+
+settingsBtn.onclick = () => {
+  settingsModal.classList.add('active');
+  chrome.storage.local.get(['geminiApiKey'], (result) => {
+    geminiApiKeyInput.value = result.geminiApiKey || '';
+  });
+};
+closeSettings.onclick = () => settingsModal.classList.remove('active');
+saveApiKeyBtn.onclick = () => {
+  const key = geminiApiKeyInput.value.trim();
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ geminiApiKey: key }, () => {
+      settingsModal.classList.remove('active');
+    });
+  } else {
+    alert('chrome.storage is not available. Please use the extension in Chrome.');
+  }
+};
+
+// Gemini response UI
+const responseSection = document.getElementById('responseSection');
+const geminiResponse = document.getElementById('geminiResponse');
+const copyResponseBtn = document.getElementById('copyResponseBtn');
+
+copyResponseBtn.onclick = () => {
+  const code = geminiResponse.textContent;
+  navigator.clipboard.writeText(code);
+  copyResponseBtn.textContent = 'Copied!';
+  setTimeout(() => (copyResponseBtn.textContent = 'Copy'), 1500);
+};
+
+// Fixed context for Gemini prompt
+const FIXED_CONTEXT = `You are an expert in UI test automation with deep knowledge in Selenium
+Given the xpaths of elements, write Selenium test cases for theese scenarioes (assuming that all the setups are already done and you just need to use the xpaths to generate test case functions) -`;
+
+const updateUI = () => {
+  elementCount.textContent = `${xpaths.length}/${MAX_SELECTION}`;
+  emptyState.style.display = xpaths.length === 0 ? 'block' : 'none';
+  
+  if (isPickerActive) {
+    statusIndicator.textContent = 'Picker is active - click elements on the page';
+    statusIndicator.className = 'status-indicator status-active';
+    startPickerButton.textContent = 'Stop Picker';
+  } else {
+    statusIndicator.textContent = 'Click "Start Picker" to begin selecting elements';
+    statusIndicator.className = 'status-indicator status-inactive';
+    startPickerButton.textContent = 'Start Picker';
+  }
+};
+
+// Cleanup function to remove all highlights and event listeners
+const cleanupPageHighlights = async () => {
+  try {
+    let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        // Remove all highlights
+        const elements = document.querySelectorAll('.xpath-highlight');
+        elements.forEach(el => el.classList.remove('xpath-highlight'));
+        
+        // Remove styles
+        const styleEl = document.getElementById('xpath-highlight-styles');
+        if (styleEl) {
+          styleEl.remove();
+        }
+        
+        // Reset picker state
+        if (window.__xpathPickerActive) {
+          window.__xpathPickerActive = false;
+        }
+        
+        // Remove the stored click handler reference if it exists
+        if (window.__xpathClickHandler) {
+          document.body.removeEventListener('click', window.__xpathClickHandler, true);
+          delete window.__xpathClickHandler;
+        }
+      }
+    });
+  } catch (e) {
+    console.log('Cleanup error:', e);
+  }
+};
+
+// Add XPath to the list
+const addXPath = (label, xpath) => {
+  if (xpaths.length >= MAX_SELECTION) {
+    return false;
+  }
+  
+  const labelKey = label.replace(/\s+/g, ' ').trim();
+  xpaths.push({ [labelKey]: xpath });
+  
+  const li = document.createElement('li');
+  li.className = 'xpath-item';
+  li.innerHTML = `
+    <div class="xpath-item-label">
+      <span>${labelKey}</span>
+      <button class="delete-btn" title="Remove">×</button>
+    </div>
+    <div class="xpath-item-path">${xpath}</div>
+  `;
+  
+  if (emptyState.style.display !== 'none') {
+    emptyState.style.display = 'none';
+  }
+  
+  xpathList.appendChild(li);
+  updateUI();
+  
+  // Delete button handler
+  li.querySelector('.delete-btn').onclick = (e) => {
+    e.stopPropagation();
+    li.style.transform = 'translateX(100%)';
+    li.style.opacity = '0';
+    setTimeout(() => {
+      xpathList.removeChild(li);
+      const index = xpaths.findIndex(x => Object.values(x)[0] === xpath);
+      if (index !== -1) xpaths.splice(index, 1);
+      updateUI();
+      
+      // Remove highlight from page
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        chrome.scripting.executeScript({
+          target: { tabId: tabs[0].id },
+          func: (xpathToRemove) => {
+            const elements = document.querySelectorAll('.xpath-highlight');
+            elements.forEach(el => {
+              // Simple XPath check - you might want to improve this
+              if (el.textContent.includes(xpathToRemove.split('/').pop())) {
+                el.classList.remove('xpath-highlight');
+              }
+            });
+          },
+          args: [xpath]
+        });
+      });
+    }, 200);
+  };
+  
+  return true;
+};
+
+// Clear all XPaths
+const clearXPaths = async () => {
+  xpaths.length = 0;
+  xpathList.innerHTML = '<div class="empty-state" id="empty-state"><div class="empty-state-icon">🎯</div><div>Click elements on the page to collect their XPaths</div></div>';
+  updateUI();
+  
+  // Clear highlights from page
+  await cleanupPageHighlights();
+};
+
+// Start/Stop picker
+const togglePicker = async () => {
+  isPickerActive = !isPickerActive;
+
+  if (isPickerActive) {
+    // Inject the picker functionality into the page
+    let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          // This will run in the page context
+          if (window.__xpathPickerActive) return;
+          window.__xpathPickerActive = true;
+          
+          // Add highlight styles
+          if (!document.getElementById('xpath-highlight-styles')) {
+            const style = document.createElement('style');
+            style.id = 'xpath-highlight-styles';
+            style.textContent = `
+              .xpath-highlight {
+                outline: 3px solid #667eea !important;
+                outline-offset: 2px !important;
+                background-color: rgba(102, 126, 234, 0.1) !important;
+                box-shadow: 0 0 0 6px rgba(102, 126, 234, 0.2) !important;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+                position: relative !important;
+              }
+              
+              .xpath-highlight:after {
+                content: '✓';
+                position: absolute;
+                top: -10px;
+                right: -10px;
+                background: #667eea;
+                color: white;
+                width: 20px;
+                height: 20px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 12px;
+                font-weight: bold;
+                z-index: 1000;
+              }
+            `;
+            document.head.appendChild(style);
+          }
+          
+          // XPath function
+          function getXPath(el) {
+            if (!el || el.nodeType !== 1) return '';
+            if (el === document.body) return '/html/body';
+            if (el.id) return `//*[@id="${el.id}"]`;
+            
+            let ix = 0;
+            const siblings = el.parentNode ? el.parentNode.childNodes : [];
+            for (let i = 0; i < siblings.length; i++) {
+              const sibling = siblings[i];
+              if (sibling === el) {
+                const path = getXPath(el.parentNode);
+                return `${path}/${el.tagName.toLowerCase()}[${ix + 1}]`;
+              }
+              if (sibling.nodeType === 1 && sibling.tagName === el.tagName) {
+                ix++;
+              }
+            }
+            return '';
+          }
+          
+          // Create and store the click handler
+          window.__xpathClickHandler = function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            
+            const el = event.target;
+            const xpath = getXPath(el);
+            const label = el.innerText.trim().slice(0, 40) || el.tagName.toLowerCase();
+            
+            // Send to side panel
+            chrome.runtime.sendMessage({
+              action: 'addXPath',
+              label: label,
+              xpath: xpath
+            });
+            
+            // Add highlight
+            el.classList.add('xpath-highlight');
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(xpath);
+          };
+          
+          // Add click handler
+          document.body.addEventListener('click', window.__xpathClickHandler, true);
+        }
+      });
+    } catch (e) {
+      console.log('Script injection error:', e);
+    }
+  } else {
+    // Stop picker
+    await cleanupPageHighlights();
+  }
+
+  updateUI();
+};
+
+// Overwrite sendData to call Gemini
+const sendData = async () => {
+  const prompt = chatInput.value.trim();
+  if (!prompt) {
+    chatInput.focus();
+    chatInput.style.borderColor = 'rgba(255, 59, 92, 0.8)';
+    setTimeout(() => chatInput.style.borderColor = 'rgba(255, 255, 255, 0.2)', 2000);
+    return;
+  }
+  if (xpaths.length === 0) {
+    xpathList.style.borderColor = 'rgba(255, 59, 92, 0.8)';
+    setTimeout(() => xpathList.style.borderColor = 'transparent', 2000);
+    return;
+  }
+
+  // Show loading
+  responseSection.classList.add('active');
+  geminiResponse.textContent = 'Loading...';
+  copyResponseBtn.style.display = 'none';
+
+  // Get API key
+  chrome.storage.local.get(['geminiApiKey'], async (result) => {
+    const apiKey = result.geminiApiKey;
+    if (!apiKey) {
+      geminiResponse.textContent = 'Please set your Gemini API key in settings.';
+      return;
+    }
+
+    // Compose payload
+    const userPrompt = prompt;
+    const payload = {
+      contents: [
+        { parts: [ { text: FIXED_CONTEXT + '\n\n' + userPrompt + '\n\n' + 'Xpaths - ' + xpaths.map(x => Object.values(x)[0]).join('\n') } ] } + 'INSTRUCTIONS : use selenium-java 4.8.1'
+      ]
+    };
+
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': '*/*',
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+      const data = await res.json();
+      let code = '';
+      if (data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
+        // Try to extract code block
+        const text = data.candidates[0].content.parts.map(p => p.text).join('\n');
+        appendGeminiResponse(text);
+        const match = text.match(/```[a-zA-Z]*\n([\s\S]*?)```/);
+        code = match ? match[1].trim() : text.trim();
+      } else {
+        code = 'No response or invalid API key.';
+      }
+      geminiResponse.textContent = code;
+      copyResponseBtn.style.display = 'block';
+    } catch (e) {
+      geminiResponse.textContent = 'Error: ' + e.message;
+      copyResponseBtn.style.display = 'none';
+    }
+  });
+};
+
+const appendGeminiResponse = (text) => {
+  const historyContainer = document.getElementById('geminiHistory');
+  const match = text.match(/```[a-zA-Z]*\n([\s\S]*?)```/);
+  const code = match ? match[1].trim() : text.trim();
+
+  const messageWrapper = document.createElement('div');
+  messageWrapper.className = 'gemini-message';
+
+  const pre = document.createElement('pre');
+  const codeEl = document.createElement('code');
+  codeEl.textContent = code;
+  pre.appendChild(codeEl);
+  messageWrapper.appendChild(pre);
+
+  historyContainer.appendChild(messageWrapper);
+
+  historyContainer.scrollTop = historyContainer.scrollHistory;
+};
+
+// Event listeners
+clearButton.onclick = clearXPaths;
+startPickerButton.onclick = togglePicker;
+sendButton.onclick = sendData;
+
+// Listen for messages from injected script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'addXPath') {
+    const success = addXPath(message.label, message.xpath);
+    sendResponse({ success });
+  }
+  return true;
+});
+
+// Cleanup when side panel is closed or page is navigated
+window.addEventListener('beforeunload', cleanupPageHighlights);
+window.addEventListener('pagehide', cleanupPageHighlights);
+
+// Also cleanup when the extension is disabled or side panel is closed
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    cleanupPageHighlights();
+  }
+});
+
+// Initialize UI
+updateUI(); 
+
+document.getElementById('toggleHistoryBtn').addEventListener('click', function () {
+  const history = document.getElementById('geminiHistory');
+  const isVisible = history.style.display === 'block';
+
+  history.style.display = isVisible ? 'none' : 'block';
+  this.textContent = isVisible ? 'Show History' : 'Hide History';
+});
